@@ -73,6 +73,7 @@ public class HadoopTuningConfig implements TuningConfig
         null,
         null,
         null,
+        null,
         null
     );
   }
@@ -99,6 +100,7 @@ public class HadoopTuningConfig implements TuningConfig
   private final boolean logParseExceptions;
   private final int maxParseExceptions;
   private final boolean useYarnRMJobStatusFallback;
+  private final boolean segmentCompressed;
 
   @JsonCreator
   public HadoopTuningConfig(
@@ -127,7 +129,8 @@ public class HadoopTuningConfig implements TuningConfig
       final @JsonProperty("allowedHadoopPrefix") @Nullable List<String> allowedHadoopPrefix,
       final @JsonProperty("logParseExceptions") @Nullable Boolean logParseExceptions,
       final @JsonProperty("maxParseExceptions") @Nullable Integer maxParseExceptions,
-      final @JsonProperty("useYarnRMJobStatusFallback") @Nullable Boolean useYarnRMJobStatusFallback
+      final @JsonProperty("useYarnRMJobStatusFallback") @Nullable Boolean useYarnRMJobStatusFallback,
+      final @JsonProperty("segmentCompressed") @Nullable Boolean segmentCompressed
   )
   {
     this.workingPath = workingPath;
@@ -172,6 +175,7 @@ public class HadoopTuningConfig implements TuningConfig
     this.logParseExceptions = logParseExceptions == null ? TuningConfig.DEFAULT_LOG_PARSE_EXCEPTIONS : logParseExceptions;
 
     this.useYarnRMJobStatusFallback = useYarnRMJobStatusFallback == null ? true : useYarnRMJobStatusFallback;
+    this.segmentCompressed = segmentCompressed == null ? true : segmentCompressed;
   }
 
   @Nullable
@@ -318,6 +322,13 @@ public class HadoopTuningConfig implements TuningConfig
     return useYarnRMJobStatusFallback;
   }
 
+  @JsonProperty("segmentCompressed")
+  public boolean isSegmentCompressed()
+  {
+    // Just the user-specified list. More are added in HadoopDruidIndexerConfig.
+    return segmentCompressed;
+  }
+
   public HadoopTuningConfig withWorkingPath(String path)
   {
     return new HadoopTuningConfig(
@@ -344,7 +355,8 @@ public class HadoopTuningConfig implements TuningConfig
         allowedHadoopPrefix,
         logParseExceptions,
         maxParseExceptions,
-        useYarnRMJobStatusFallback
+        useYarnRMJobStatusFallback,
+        segmentCompressed
     );
   }
 
@@ -374,7 +386,8 @@ public class HadoopTuningConfig implements TuningConfig
         allowedHadoopPrefix,
         logParseExceptions,
         maxParseExceptions,
-        useYarnRMJobStatusFallback
+        useYarnRMJobStatusFallback,
+        segmentCompressed
     );
   }
 
@@ -404,7 +417,8 @@ public class HadoopTuningConfig implements TuningConfig
         allowedHadoopPrefix,
         logParseExceptions,
         maxParseExceptions,
-        useYarnRMJobStatusFallback
+        useYarnRMJobStatusFallback,
+        segmentCompressed
     );
   }
 }
