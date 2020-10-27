@@ -929,7 +929,6 @@ public class JobHelper
     final DataSegment finalSegment = segmentTemplate
         .withLoadSpec(dataSegmentPusher.makeLoadSpec(indexOutURI))
         .withSize(size.get())
-        .withSegmentCompressed(false)
         .withBinaryVersion(SegmentUtils.getVersionFromDir(mergedBase));
 
     if (!renameDir(outputFS, tmpDirPath, dirPath)) {
