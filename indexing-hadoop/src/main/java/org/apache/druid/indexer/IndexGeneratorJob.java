@@ -813,27 +813,56 @@ public class IndexGeneratorJob implements Jobby
             0
         );
 
-        final DataSegment segment = JobHelper.serializeOutIndex(
-            segmentTemplate,
-            context.getConfiguration(),
-            context,
-            mergedBase,
-            JobHelper.makeFileNamePath(
-                new Path(config.getSchema().getIOConfig().getSegmentOutputPath()),
-                outputFS,
-                segmentTemplate,
-                JobHelper.INDEX_ZIP,
-                HadoopDruidIndexerConfig.DATA_SEGMENT_PUSHER
-            ),
-            JobHelper.makeTmpPath(
-                new Path(config.getSchema().getIOConfig().getSegmentOutputPath()),
-                outputFS,
-                segmentTemplate,
-                context.getTaskAttemptID(),
-                HadoopDruidIndexerConfig.DATA_SEGMENT_PUSHER
-            ),
-            HadoopDruidIndexerConfig.DATA_SEGMENT_PUSHER
-        );
+        boolean segmentCompressed = config.getSchema().getTuningConfig().isSegmentCompressed();
+        DataSegment segment = null;
+        if (segmentCompressed) {
+          segment = JobHelper.serializeOutIndex(
+              segmentTemplate,
+              context.getConfiguration(),
+              context,
+              mergedBase,
+              JobHelper.makeFileNamePath(
+                  new Path(config.getSchema().getIOConfig().getSegmentOutputPath()),
+                  outputFS,
+                  segmentTemplate,
+                  JobHelper.INDEX_ZIP,
+                  HadoopDruidIndexerConfig.DATA_SEGMENT_PUSHER
+              ),
+              JobHelper.makeTmpPath(
+                  new Path(config.getSchema().getIOConfig().getSegmentOutputPath()),
+                  outputFS,
+                  segmentTemplate,
+                  context.getTaskAttemptID(),
+                  HadoopDruidIndexerConfig.DATA_SEGMENT_PUSHER
+              ),
+              HadoopDruidIndexerConfig.DATA_SEGMENT_PUSHER
+          );
+
+        } else {
+          Path dirPath = JobHelper.makeDirPath(
+              new Path(config.getSchema().getIOConfig().getSegmentOutputPath()),
+              outputFS,
+              segmentTemplate,
+              HadoopDruidIndexerConfig.DATA_SEGMENT_PUSHER
+          );
+
+          Path tmpDirPath = JobHelper.makeTmpDirPath(
+              new Path(config.getSchema().getIOConfig().getSegmentOutputPath()),
+              outputFS,
+              segmentTemplate,
+              context.getTaskAttemptID(),
+              HadoopDruidIndexerConfig.DATA_SEGMENT_PUSHER
+          );
+          segment = JobHelper.serializeOutIndexUncompressed(
+              segmentTemplate,
+              context.getConfiguration(),
+              context,
+              mergedBase,
+              dirPath,
+              tmpDirPath,
+              HadoopDruidIndexerConfig.DATA_SEGMENT_PUSHER
+          );
+        }
 
         Path descriptorPath = config.makeDescriptorInfoPath(segment);
         descriptorPath = JobHelper.prependFSIfNullScheme(

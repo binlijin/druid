@@ -603,6 +603,45 @@ public class JobHelper
     out.putNextEntry(new ZipEntry(file.getName()));
   }
 
+  public static Path makeDirPath(
+      final Path basePath,
+      final FileSystem fs,
+      final DataSegment segmentTemplate,
+      DataSegmentPusher dataSegmentPusher
+  )
+  {
+    String indexPathName = StringUtils.format(
+        "./%s/%s",
+        dataSegmentPusher.getStorageDir(segmentTemplate, false),
+        segmentTemplate.getShardSpec().getPartitionNum()
+    );
+
+    return new Path(
+        prependFSIfNullScheme(fs, basePath),
+        indexPathName
+    );
+  }
+
+  public static Path makeTmpDirPath(
+      final Path basePath,
+      final FileSystem fs,
+      final DataSegment segmentTemplate,
+      final TaskAttemptID taskAttemptID,
+      DataSegmentPusher dataSegmentPusher
+  )
+  {
+    String indexPathName = StringUtils.format(
+        "./%s/%s",
+        dataSegmentPusher.getStorageDir(segmentTemplate, false),
+        segmentTemplate.getShardSpec().getPartitionNum() + "." + taskAttemptID.getId()
+    );
+
+    return new Path(
+        prependFSIfNullScheme(fs, basePath),
+        indexPathName
+    );
+  }
+
   public static Path makeFileNamePath(
       final Path basePath,
       final FileSystem fs,
@@ -838,5 +877,120 @@ public class JobHelper
       jobTrackerAddress = config.get("mapreduce.jobtracker.address");
     }
     return jobTrackerAddress;
+  }
+
+  public static DataSegment serializeOutIndexUncompressed(
+      final DataSegment segmentTemplate,
+      final Configuration configuration,
+      final Progressable progressable,
+      final File mergedBase,
+      final Path dirPath,
+      final Path tmpDirPath,
+      DataSegmentPusher dataSegmentPusher
+  )
+      throws IOException
+  {
+    final FileSystem outputFS = FileSystem.get(dirPath.toUri(), configuration);
+    final AtomicLong size = new AtomicLong(0L);
+    final DataPusher normalPusher = (DataPusher) RetryProxy.create(
+        DataPusher.class,
+        new DataPusher()
+        {
+          @Override
+          public long push() throws IOException
+          {
+            List<String> filesToCopy = Arrays.asList(mergedBase.list());
+            for (String fileName : filesToCopy) {
+              final File fileToCopy = new File(mergedBase, fileName);
+              Path tmpPath = new Path(tmpDirPath, fileName);
+              try (OutputStream outputStream = outputFS.create(
+                  tmpPath,
+                  true,
+                  DEFAULT_FS_BUFFER_SIZE,
+                  progressable
+              )) {
+                size.addAndGet(copyFileToStream(fileToCopy, outputStream, progressable));
+              }
+              catch (IOException | RuntimeException exception) {
+                log.error(exception, "Exception in retry loop");
+                throw exception;
+              }
+              log.info("Copy file [%s] to [%s]", fileToCopy.getPath(), tmpPath.toString());
+            }
+            return -1;
+          }
+        },
+        RetryPolicies.exponentialBackoffRetry(NUM_RETRIES, SECONDS_BETWEEN_RETRIES, TimeUnit.SECONDS)
+    );
+    normalPusher.push();
+    log.info("Copy %,d bytes to [%s]", size.get(), tmpDirPath.toUri());
+
+    final URI indexOutURI = dirPath.toUri();
+    final DataSegment finalSegment = segmentTemplate
+        .withLoadSpec(dataSegmentPusher.makeLoadSpec(indexOutURI))
+        .withSize(size.get())
+        .withSegmentCompressed(false)
+        .withBinaryVersion(SegmentUtils.getVersionFromDir(mergedBase));
+
+    if (!renameDir(outputFS, tmpDirPath, dirPath)) {
+      throw new IOE(
+          "Unable to rename [%s] to [%s]",
+          tmpDirPath.toUri().toString(),
+          dirPath.toUri().toString()
+      );
+    }
+
+    return finalSegment;
+  }
+
+  public static long copyFileToStream(
+      File file,
+      OutputStream outputStream,
+      Progressable progressable
+  ) throws IOException
+  {
+    long numRead = 0;
+    try (FileInputStream inputStream = new FileInputStream(file)) {
+      byte[] buf = new byte[0x10000];
+      for (int bytesRead = inputStream.read(buf); bytesRead >= 0; bytesRead = inputStream.read(buf)) {
+        progressable.progress();
+        if (bytesRead == 0) {
+          continue;
+        }
+        outputStream.write(buf, 0, bytesRead);
+        progressable.progress();
+        numRead += bytesRead;
+      }
+    }
+    outputStream.flush();
+    outputStream.close();
+    progressable.progress();
+    return numRead;
+  }
+
+  private static boolean renameDir(
+      final FileSystem outputFS,
+      final Path tmpDirPath,
+      final Path dirPath
+  )
+  {
+    try {
+      return RetryUtils.retry(
+          () -> {
+
+            if (outputFS.exists(dirPath)) {
+              outputFS.delete(dirPath, false);
+            }
+
+            log.info("Attempting rename from [%s] to [%s]", tmpDirPath, dirPath);
+            return outputFS.rename(tmpDirPath, dirPath);
+          },
+          FileUtils.IS_EXCEPTION,
+          NUM_RETRIES
+      );
+    }
+    catch (Exception e) {
+      throw new RuntimeException(e);
+    }
   }
 }
