@@ -77,12 +77,13 @@ public class PulsarIndexTaskIOConfig extends SeekableStreamIndexTaskIOConfig<Str
 
     final SeekableStreamEndSequenceNumbers<String, String> myEndSequenceNumbers = getEndSequenceNumbers();
     for (String partition : myEndSequenceNumbers.getPartitionSequenceNumberMap().keySet()) {
+      String myEndSequenceNumber = myEndSequenceNumbers.getPartitionSequenceNumberMap().get(partition);
+      String myStartSequenceNumber = getStartSequenceNumbers().getPartitionSequenceNumberMap().get(partition);
       Preconditions.checkArgument(
-          myEndSequenceNumbers.getPartitionSequenceNumberMap()
-                       .get(partition)
-                       .compareTo(getStartSequenceNumbers().getPartitionSequenceNumberMap().get(partition)) >= 0,
-          "end offset must be >= start offset for partition[%s]",
-          partition
+              PulsarSequenceNumber.of(myEndSequenceNumber).compareTo(
+                      PulsarSequenceNumber.of(myStartSequenceNumber)) >= 0,
+              "end offset must be >= start offset for partition[%s]",
+              partition
       );
     }
   }

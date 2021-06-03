@@ -56,6 +56,7 @@ import org.apache.druid.java.util.emitter.EmittingLogger;
 import org.apache.druid.java.util.emitter.service.ServiceEmitter;
 import org.apache.druid.segment.incremental.RowIngestionMetersFactory;
 import org.apache.druid.server.metrics.DruidMonitorSchedulerConfig;
+import org.apache.pulsar.common.naming.TopicName;
 import org.joda.time.DateTime;
 
 import javax.annotation.Nullable;
@@ -84,7 +85,6 @@ public class PulsarSupervisor extends SeekableStreamSupervisor<String, String, P
   private final ServiceEmitter emitter;
   private final DruidMonitorSchedulerConfig monitorSchedulerConfig;
   private volatile Map<String, String> latestSequenceFromStream;
-
 
   private final PulsarSupervisorSpec spec;
 
@@ -115,7 +115,6 @@ public class PulsarSupervisor extends SeekableStreamSupervisor<String, String, P
     this.monitorSchedulerConfig = spec.getMonitorSchedulerConfig();
   }
 
-
   @Override
   protected RecordSupplier<String, String, PulsarRecordEntity> setupRecordSupplier()
   {
@@ -125,16 +124,8 @@ public class PulsarSupervisor extends SeekableStreamSupervisor<String, String, P
   @Override
   protected int getTaskGroupIdForPartition(String partitionId)
   {
-    return getTaskGroupIdForPartitionWithProvidedList(partitionId, partitionIds);
-  }
-
-  private int getTaskGroupIdForPartitionWithProvidedList(String partitionId, List<String> availablePartitions)
-  {
-    int index = availablePartitions.indexOf(partitionId);
-    if (index < 0) {
-      return index;
-    }
-    return availablePartitions.indexOf(partitionId) % spec.getIoConfig().getTaskCount();
+    TopicName topic = TopicName.get(partitionId);
+    return topic.getPartitionIndex() % spec.getIoConfig().getTaskCount();
   }
 
   @Override
@@ -174,7 +165,6 @@ public class PulsarSupervisor extends SeekableStreamSupervisor<String, String, P
         stateManager.getExceptionEvents()
     );
   }
-
 
   @Override
   protected SeekableStreamIndexTaskIOConfig createTaskIoConfig(
@@ -253,7 +243,6 @@ public class PulsarSupervisor extends SeekableStreamSupervisor<String, String, P
   {
     return ImmutableMap.of();
   }
-
 
   @Override
   protected Map<String, Long> getTimeLagPerPartition(Map<String, String> currentOffsets)

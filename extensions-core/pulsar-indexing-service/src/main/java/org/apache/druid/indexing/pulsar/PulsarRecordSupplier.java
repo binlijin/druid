@@ -25,6 +25,7 @@ import com.google.common.collect.ImmutableList;
 import org.apache.druid.data.input.pulsar.PulsarRecordEntity;
 import org.apache.druid.indexing.seekablestream.common.OrderedPartitionableRecord;
 import org.apache.druid.indexing.seekablestream.common.RecordSupplier;
+import org.apache.druid.indexing.seekablestream.common.StreamException;
 import org.apache.druid.indexing.seekablestream.common.StreamPartition;
 import org.apache.druid.java.util.emitter.EmittingLogger;
 import org.apache.pulsar.client.api.Consumer;
@@ -47,7 +48,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
 
 public class PulsarRecordSupplier implements RecordSupplier<String, String, PulsarRecordEntity>
 {
@@ -75,21 +75,41 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
   @Override
   public void assign(Set<StreamPartition<String>> streamPartitions)
   {
+    Set<String> partitions = new HashSet<>();
     final Map<String, Object> consumerConfigs = PulsarConsumerConfigs.getConsumerProperties();
     for (StreamPartition<String> streamPartition : streamPartitions) {
+      String topicPartition = streamPartition.getPartitionId();
+      partitions.add(topicPartition);
+      if (consumerHashMap.containsKey(topicPartition)) {
+        continue;
+      }
       try {
-        String topicPartition = streamPartition.getPartitionId();
         Consumer consumer = client.newConsumer()
             .topic(topicPartition)
             .subscriptionName((String) consumerConfigs.get("subscription.name"))
             .subscriptionType(SubscriptionType.Exclusive)
             .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest)
-            .negativeAckRedeliveryDelay(60, TimeUnit.SECONDS)
+            //.negativeAckRedeliveryDelay(60, TimeUnit.SECONDS)
             .subscribe();
         consumerHashMap.put(topicPartition, consumer);
       }
       catch (PulsarClientException e) {
-        log.error("Could not assign partitions." + e.getMessage());
+        log.error(e, "Assign partitions throw error.");
+        throw new StreamException(e);
+      }
+    }
+
+    for (Iterator<Map.Entry<String, Consumer>> i = consumerHashMap.entrySet()
+            .iterator(); i.hasNext(); ) {
+      Map.Entry<String, Consumer> entry = i.next();
+      if (!partitions.contains(entry.getKey())) {
+        i.remove();
+        try {
+          entry.getValue().close();
+        }
+        catch (Exception e) {
+          log.warn(e, "close " + entry.getKey() + " Consumer error");
+        }
       }
     }
   }
@@ -100,12 +120,13 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
     String[] sequenceNumbers = sequenceNumber.split(":");
     try {
       Consumer consumer = consumerHashMap.get(partition.getPartitionId());
-      consumer.getLastMessageId();
+      //consumer.getLastMessageId();
       MessageIdImpl messageId = new MessageIdImpl(Long.parseLong(sequenceNumbers[0]), Long.parseLong(sequenceNumbers[1]), Integer.parseInt(sequenceNumbers[2]));
       consumer.seek(messageId);
     }
     catch (PulsarClientException e) {
-      log.error("Could not seek pulsar offset." + e.getMessage());
+      log.error(e, "Seek pulsar offset error.");
+      throw new StreamException(e);
     }
   }
 
@@ -117,7 +138,8 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
         consumerHashMap.get(partition.getPartitionId()).seek(MessageId.earliest);
       }
       catch (PulsarClientException e) {
-        log.error("Could not seek earliest offset." + e.getMessage());
+        log.error(e, "Could not seek earliest offset");
+        throw new StreamException(e);
       }
     }
   }
@@ -130,7 +152,8 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
         consumerHashMap.get(partition.getPartitionId()).seek(MessageId.latest);
       }
       catch (PulsarClientException e) {
-        log.error("Could not seek to latest offset." + e.getMessage());
+        log.error(e, "Could not seek to latest offset.");
+        throw new StreamException(e);
       }
     }
   }
@@ -181,7 +204,8 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
       pos = consumerHashMap.get(partition.getPartitionId()).getLastMessageId().toString();
     }
     catch (PulsarClientException e) {
-      log.error("Could not get latest message ID. " + e.getMessage());
+      log.error(e, "Could not get latest message ID. ");
+      throw new StreamException(e);
     }
     return pos;
   }
@@ -207,10 +231,12 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
       topicPartitions = client.getPartitionsForTopic(stream).get();
     }
     catch (InterruptedException e) {
-      log.error("Could not get partitions. " + e.getMessage());
+      log.error(e, "Could not get partitions. ");
+      throw new StreamException(e);
     }
     catch (ExecutionException e) {
-      log.error("Could not get partitions. " + e.getMessage());
+      log.error(e, "Could not get partitions. ");
+      throw new StreamException(e);
     }
     return new HashSet<String>(topicPartitions);
   }
@@ -227,7 +253,7 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
         consumerHashMap.get(topicPartition).close();
       }
       catch (PulsarClientException e) {
-        log.error("Could not get close consumer. " + e.getMessage());
+        log.error(e, "Close consumer error. ");
       }
     }
   }
@@ -240,11 +266,12 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
       Thread.currentThread().setContextClassLoader(PulsarRecordSupplier.class.getClassLoader());
       try {
         client = PulsarClient.builder()
-            .serviceUrl((String) consumerProperties.get("pulsar.url"))
+            .serviceUrl((String) consumerProperties.get("serviceUrl"))
             .build();
       }
       catch (PulsarClientException e) {
-        log.error("Could not create pulsar client. " + e.getMessage());
+        log.error(e, "Could not create pulsar client. ");
+        throw new StreamException(e);
       }
       return client;
     }

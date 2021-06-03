@@ -32,12 +32,11 @@ import java.util.Map;
 
 public class PulsarSupervisorIOConfig extends SeekableStreamSupervisorIOConfig
 {
-  public static final String PULSAR_URL = "pulsar.url";
+  public static final String PULSAR_URL = "serviceUrl";
   public static final long DEFAULT_POLL_TIMEOUT_MILLIS = 100;
 
   private final Map<String, Object> consumerProperties;
   private final long pollTimeout;
-
 
   @JsonCreator
   public PulsarSupervisorIOConfig(
