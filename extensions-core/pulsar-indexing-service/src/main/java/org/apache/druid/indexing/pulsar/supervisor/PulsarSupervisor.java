@@ -32,7 +32,6 @@ import org.apache.druid.indexing.overlord.DataSourceMetadata;
 import org.apache.druid.indexing.overlord.IndexerMetadataStorageCoordinator;
 import org.apache.druid.indexing.overlord.TaskMaster;
 import org.apache.druid.indexing.overlord.TaskStorage;
-import org.apache.druid.indexing.overlord.supervisor.autoscaler.LagStats;
 import org.apache.druid.indexing.pulsar.PulsarDataSourceMetadata;
 import org.apache.druid.indexing.pulsar.PulsarIndexTask;
 import org.apache.druid.indexing.pulsar.PulsarIndexTaskClientFactory;
@@ -302,12 +301,6 @@ public class PulsarSupervisor extends SeekableStreamSupervisor<String, String, P
   protected boolean useExclusiveStartSequenceNumberForNonFirstSequence()
   {
     return false;
-  }
-
-  @Override
-  public LagStats computeLagStats()
-  {
-    throw new UnsupportedOperationException("Compute Lag Stats is not supported in KinesisSupervisor yet.");
   }
 
   @Override
