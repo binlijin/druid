@@ -27,6 +27,7 @@ import org.apache.druid.indexing.seekablestream.common.OrderedPartitionableRecor
 import org.apache.druid.indexing.seekablestream.common.RecordSupplier;
 import org.apache.druid.indexing.seekablestream.common.StreamException;
 import org.apache.druid.indexing.seekablestream.common.StreamPartition;
+import org.apache.druid.java.util.common.concurrent.Execs;
 import org.apache.druid.java.util.emitter.EmittingLogger;
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.Message;
@@ -35,30 +36,43 @@ import org.apache.pulsar.client.api.PulsarClient;
 import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.client.api.SubscriptionInitialPosition;
 import org.apache.pulsar.client.api.SubscriptionType;
-import org.apache.pulsar.client.impl.MessageIdImpl;
+import org.apache.pulsar.common.naming.TopicName;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
-public class PulsarRecordSupplier implements RecordSupplier<String, String, PulsarRecordEntity>
+public class PulsarRecordSupplier
+        implements RecordSupplier<String, String, PulsarRecordEntity>
 {
   private static final EmittingLogger log = new EmittingLogger(PulsarRecordSupplier.class);
   private boolean closed;
   private final PulsarClient client;
   private final ConcurrentHashMap<StreamPartition<String>, Consumer> consumerHashMap = new ConcurrentHashMap<>();
 
+  private BlockingQueue<Message<byte[]>> received;
+  private ScheduledExecutorService scheduledExec;
+  private PuslarRecordFetcher fetcher;
+  private int maxRecordsInSinglePoll;
+  protected volatile boolean checkPartitionsStarted = false;
+
   public PulsarRecordSupplier(
-      Map<String, Object> consumerProperties,
-      ObjectMapper sortingMapper
+          Map<String, Object> consumerProperties,
+          ObjectMapper sortingMapper
   )
   {
     this.client = getPulsarClient(consumerProperties);
@@ -66,10 +80,27 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
 
   @VisibleForTesting
   public PulsarRecordSupplier(
-      PulsarClient client
+          PulsarClient client
   )
   {
     this.client = client;
+  }
+
+  public PulsarRecordSupplier(
+          Map<String, Object> consumerProperties,
+          ObjectMapper sortingMapper,
+          int maxRecordsInSinglePoll
+  )
+  {
+    this.client = getPulsarClient(consumerProperties);
+    this.maxRecordsInSinglePoll = maxRecordsInSinglePoll;
+    this.received = new ArrayBlockingQueue<>(this.maxRecordsInSinglePoll);
+    this.fetcher = new PuslarRecordFetcher(consumerHashMap, received);
+
+    scheduledExec = Executors.newScheduledThreadPool(
+            2,
+            Execs.makeThreadFactory("PulsarRecordSupplier-FetcherWorker-%d")
+    );
   }
 
   @Override
@@ -83,12 +114,12 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
       String topicPartition = streamPartition.getPartitionId();
       try {
         Consumer consumer = client.newConsumer()
-            .topic(topicPartition)
-            .subscriptionName((String) consumerConfigs.get("subscription.name"))
-            .subscriptionType(SubscriptionType.Exclusive)
-            .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest)
-            //.negativeAckRedeliveryDelay(60, TimeUnit.SECONDS)
-            .subscribe();
+                .topic(topicPartition)
+                .subscriptionName((String) consumerConfigs.get("subscription.name"))
+                .subscriptionType(SubscriptionType.Exclusive)
+                .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest)
+                //.negativeAckRedeliveryDelay(60, TimeUnit.SECONDS)
+                .subscribe();
         consumerHashMap.put(streamPartition, consumer);
       }
       catch (PulsarClientException e) {
@@ -115,17 +146,17 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
   @Override
   public void seek(StreamPartition<String> partition, String sequenceNumber)
   {
-    String[] sequenceNumbers = sequenceNumber.split(":");
     try {
       Consumer consumer = consumerHashMap.get(partition);
       //consumer.getLastMessageId();
-      MessageIdImpl messageId = new MessageIdImpl(Long.parseLong(sequenceNumbers[0]), Long.parseLong(sequenceNumbers[1]), Integer.parseInt(sequenceNumbers[2]));
+      MessageId messageId = PulsarSequenceNumber.getMessageId(sequenceNumber);
       consumer.seek(messageId);
     }
     catch (PulsarClientException e) {
       log.error(e, "Seek pulsar offset error.");
       throw new StreamException(e);
     }
+    checkPartitionsStarted = true;
   }
 
   @Override
@@ -167,41 +198,65 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
   @Override
   public List<OrderedPartitionableRecord<String, String, PulsarRecordEntity>> poll(long timeout)
   {
-    List<OrderedPartitionableRecord<String, String, PulsarRecordEntity>> polledRecords = new ArrayList<>();
-    for (StreamPartition<String> topicPartition : consumerHashMap.keySet()) {
-      Consumer consumer = consumerHashMap.get(topicPartition);
-      Iterator messageIterator = null;
-      try {
-        messageIterator = consumer.batchReceive().iterator();
-      }
-      catch (PulsarClientException e) {
-        log.error("Could not poll mssafes." + e.getMessage());
-      }
-      while (messageIterator.hasNext()) {
-        Message message = (Message) messageIterator.next();
-        polledRecords.add(new OrderedPartitionableRecord<>(
-            message.getTopicName().split("partition-")[0],
-            message.getTopicName(),
-            message.getMessageId().toString(),
-            message.getValue() == null ? null : ImmutableList.of(new PulsarRecordEntity(message))
-        ));
-      }
+    if (checkPartitionsStarted) {
+      scheduledExec.submit(fetcher);
+      checkPartitionsStarted = false;
     }
-    return polledRecords;
+    List<OrderedPartitionableRecord<String, String, PulsarRecordEntity>> polledRecords = new ArrayList<>();
+    try {
+      Message<byte[]> item = received.poll(timeout, TimeUnit.MILLISECONDS);
+      if (item == null) {
+        return polledRecords;
+      }
+
+      int numberOfRecords = 0;
+
+      while (item != null) {
+        StreamPartition<String> sp = getStreamPartitionFromMessage(item);
+        String offset = item.getMessageId().toString();
+
+        polledRecords.add(new OrderedPartitionableRecord<>(
+                sp.getStream(),
+                sp.getPartitionId(),
+                offset,
+                ImmutableList.of(new PulsarRecordEntity(item))
+        ));
+
+        if (++numberOfRecords >= maxRecordsInSinglePoll) {
+          break;
+        }
+
+        // Check if we have an item already available
+        item = received.poll(0, TimeUnit.MILLISECONDS);
+      }
+
+      return polledRecords;
+    }
+    catch (InterruptedException e) {
+      //throw new StreamException(e);
+      log.warn(e, "Interrupted while polling");
+      return Collections.emptyList();
+    }
+  }
+
+  private StreamPartition<String> getStreamPartitionFromMessage(Message<byte[]> msg)
+  {
+    TopicName topic = TopicName.get(msg.getTopicName());
+    // topic.getPartitionedTopicName()  persistent://public/default/test-partition
+    // msg.getTopicName()  persistent://public/default/test-partition-partition-3
+    return new StreamPartition<>(topic.getPartitionedTopicName(), msg.getTopicName());
   }
 
   @Override
   public String getLatestSequenceNumber(StreamPartition<String> partition)
   {
-    String pos = null;
     try {
-      pos = consumerHashMap.get(partition).getLastMessageId().toString();
+      return consumerHashMap.get(partition).getLastMessageId().toString();
     }
     catch (PulsarClientException e) {
       log.error(e, "Could not get latest message ID. ");
       throw new StreamException(e);
     }
-    return pos;
   }
 
   @Override
@@ -221,15 +276,13 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
     catch (PulsarClientException e) {
       throw new StreamException(e);
     }
-    //throw new UnsupportedOperationException("getPosition() is not supported in Pulsar");
   }
 
   @Override
   public Set<String> getPartitionIds(String stream)
   {
-    List<String> topicPartitions = null;
     try {
-      topicPartitions = client.getPartitionsForTopic(stream).get();
+      return new HashSet<>(client.getPartitionsForTopic(stream).get());
     }
     catch (InterruptedException e) {
       log.error(e, "Could not get partitions. ");
@@ -239,7 +292,6 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
       log.error(e, "Could not get partitions. ");
       throw new StreamException(e);
     }
-    return new HashSet<String>(topicPartitions);
   }
 
   @Override
@@ -249,6 +301,13 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
       return;
     }
     closed = true;
+
+    if (fetcher != null) {
+      fetcher.stop();
+    }
+    if (scheduledExec != null) {
+      scheduledExec.shutdown();
+    }
     for (StreamPartition<String> topicPartition : consumerHashMap.keySet()) {
       try {
         consumerHashMap.get(topicPartition).close();
@@ -262,23 +321,20 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
   private static PulsarClient getPulsarClient(Map<String, Object> consumerProperties)
   {
     ClassLoader currCtxCl = Thread.currentThread().getContextClassLoader();
-    PulsarClient client = null;
     try {
       Thread.currentThread().setContextClassLoader(PulsarRecordSupplier.class.getClassLoader());
       try {
-        client = PulsarClient.builder()
-            .serviceUrl((String) consumerProperties.get("serviceUrl"))
-            .build();
+        return PulsarClient.builder()
+                .serviceUrl((String) consumerProperties.get("serviceUrl"))
+                .build();
       }
       catch (PulsarClientException e) {
         log.error(e, "Could not create pulsar client. ");
         throw new StreamException(e);
       }
-      return client;
     }
     finally {
       Thread.currentThread().setContextClassLoader(currCtxCl);
     }
   }
-
 }

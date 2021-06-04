@@ -227,20 +227,22 @@ public class PulsarSupervisor extends SeekableStreamSupervisor<String, String, P
   @Override
   protected Map<String, Long> getPartitionRecordLag()
   {
-    return null;
+    // not support with pulsar
+    return ImmutableMap.of();
   }
 
   @Nullable
   @Override
   protected Map<String, Long> getPartitionTimeLag()
   {
-    // time lag not currently support with pulsar
+    // time lag not support with pulsar
     return null;
   }
 
   @Override
   protected Map<String, Long> getRecordLagPerPartition(Map<String, String> currentOffsets)
   {
+    //not support with pulsar
     return ImmutableMap.of();
   }
 

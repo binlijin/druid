@@ -30,6 +30,7 @@ import org.apache.druid.indexing.common.task.TaskResource;
 import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTask;
 import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTaskRunner;
 import org.apache.druid.segment.indexing.DataSchema;
+import org.apache.druid.segment.indexing.TuningConfig;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -98,7 +99,12 @@ public class PulsarIndexTask extends SeekableStreamIndexTask<String, String, Pul
 
       final Map<String, Object> props = new HashMap<>(((PulsarIndexTaskIOConfig) super.ioConfig).getConsumerProperties());
 
-      return new PulsarRecordSupplier(props, configMapper);
+      int maxRowsInMemory = TuningConfig.DEFAULT_MAX_ROWS_IN_MEMORY;
+      if (tuningConfig != null) {
+        maxRowsInMemory = tuningConfig.getMaxRowsInMemory();
+      }
+
+      return new PulsarRecordSupplier(props, configMapper, maxRowsInMemory);
     }
     finally {
       Thread.currentThread().setContextClassLoader(currCtxCl);

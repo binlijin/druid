@@ -19,15 +19,23 @@
 
 package org.apache.druid.indexing.pulsar;
 
-import com.google.common.collect.ComparisonChain;
 import org.apache.druid.indexing.seekablestream.common.OrderedSequenceNumber;
+import org.apache.druid.indexing.seekablestream.common.StreamException;
+import org.apache.druid.java.util.emitter.EmittingLogger;
+import org.apache.pulsar.client.api.MessageId;
+import org.apache.pulsar.client.impl.BatchMessageIdImpl;
+import org.apache.pulsar.client.impl.MessageIdImpl;
 
 import javax.validation.constraints.NotNull;
+
+import java.io.IOException;
 
 // OrderedSequenceNumber.equals() should be used instead.
 @SuppressWarnings("ComparableImplementedButEqualsNotOverridden")
 public class PulsarSequenceNumber extends OrderedSequenceNumber<String>
 {
+  private static final EmittingLogger log = new EmittingLogger(PulsarSequenceNumber.class);
+
   private PulsarSequenceNumber(String sequenceNumber)
   {
     super(sequenceNumber, false);
@@ -38,18 +46,34 @@ public class PulsarSequenceNumber extends OrderedSequenceNumber<String>
     return new PulsarSequenceNumber(sequenceNumber);
   }
 
+  public static MessageId getMessageId(String sequenceNumber)
+  {
+    String[] sequenceNumbers = sequenceNumber.split(":");
+    if (sequenceNumbers.length == 3) {
+      return new MessageIdImpl(
+              Long.parseLong(sequenceNumbers[0]),
+              Long.parseLong(sequenceNumbers[1]),
+              Integer.parseInt(sequenceNumbers[2]));
+    } else if (sequenceNumbers.length == 4) {
+      return new BatchMessageIdImpl(
+              Long.parseLong(sequenceNumbers[0]),
+              Long.parseLong(sequenceNumbers[1]),
+              Integer.parseInt(sequenceNumbers[2]),
+              Integer.parseInt(sequenceNumbers[3]));
+    } else {
+      log.error(" wrong sequenceNumber = " + sequenceNumber);
+      throw new StreamException(new IOException("wrong sequenceNumber " + sequenceNumber));
+    }
+  }
+
   @Override
   public int compareTo(
       @NotNull OrderedSequenceNumber<String> o
   )
   {
-    String[] ss1 = this.get().split(":");
-    String[] ss2 = o.get().split(":");
-    return ComparisonChain.start()
-        .compare(Long.parseLong(ss1[0]), Long.parseLong(ss2[0]))
-        .compare(Long.parseLong(ss1[1]), Long.parseLong(ss2[1]))
-        .compare(Integer.parseInt(ss1[2]), Integer.parseInt(ss2[2]))
-        .result();
+    MessageId ss1 = getMessageId(get());
+    MessageId ss2 = getMessageId(o.get());
+    return ss1.compareTo(ss2);
   }
 
 }
