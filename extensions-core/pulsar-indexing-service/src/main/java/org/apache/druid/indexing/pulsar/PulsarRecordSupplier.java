@@ -54,7 +54,7 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
   private static final EmittingLogger log = new EmittingLogger(PulsarRecordSupplier.class);
   private boolean closed;
   private final PulsarClient client;
-  private final ConcurrentHashMap<String, Consumer> consumerHashMap = new ConcurrentHashMap<>();
+  private final ConcurrentHashMap<StreamPartition<String>, Consumer> consumerHashMap = new ConcurrentHashMap<>();
 
   public PulsarRecordSupplier(
       Map<String, Object> consumerProperties,
@@ -75,14 +75,12 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
   @Override
   public void assign(Set<StreamPartition<String>> streamPartitions)
   {
-    Set<String> partitions = new HashSet<>();
     final Map<String, Object> consumerConfigs = PulsarConsumerConfigs.getConsumerProperties();
     for (StreamPartition<String> streamPartition : streamPartitions) {
-      String topicPartition = streamPartition.getPartitionId();
-      partitions.add(topicPartition);
-      if (consumerHashMap.containsKey(topicPartition)) {
+      if (consumerHashMap.containsKey(streamPartition)) {
         continue;
       }
+      String topicPartition = streamPartition.getPartitionId();
       try {
         Consumer consumer = client.newConsumer()
             .topic(topicPartition)
@@ -91,7 +89,7 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
             .subscriptionInitialPosition(SubscriptionInitialPosition.Earliest)
             //.negativeAckRedeliveryDelay(60, TimeUnit.SECONDS)
             .subscribe();
-        consumerHashMap.put(topicPartition, consumer);
+        consumerHashMap.put(streamPartition, consumer);
       }
       catch (PulsarClientException e) {
         log.error(e, "Assign partitions throw error.");
@@ -99,10 +97,10 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
       }
     }
 
-    for (Iterator<Map.Entry<String, Consumer>> i = consumerHashMap.entrySet()
+    for (Iterator<Map.Entry<StreamPartition<String>, Consumer>> i = consumerHashMap.entrySet()
             .iterator(); i.hasNext(); ) {
-      Map.Entry<String, Consumer> entry = i.next();
-      if (!partitions.contains(entry.getKey())) {
+      Map.Entry<StreamPartition<String>, Consumer> entry = i.next();
+      if (!streamPartitions.contains(entry.getKey())) {
         i.remove();
         try {
           entry.getValue().close();
@@ -119,7 +117,7 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
   {
     String[] sequenceNumbers = sequenceNumber.split(":");
     try {
-      Consumer consumer = consumerHashMap.get(partition.getPartitionId());
+      Consumer consumer = consumerHashMap.get(partition);
       //consumer.getLastMessageId();
       MessageIdImpl messageId = new MessageIdImpl(Long.parseLong(sequenceNumbers[0]), Long.parseLong(sequenceNumbers[1]), Integer.parseInt(sequenceNumbers[2]));
       consumer.seek(messageId);
@@ -135,7 +133,7 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
   {
     for (StreamPartition<String> partition : partitions) {
       try {
-        consumerHashMap.get(partition.getPartitionId()).seek(MessageId.earliest);
+        consumerHashMap.get(partition).seek(MessageId.earliest);
       }
       catch (PulsarClientException e) {
         log.error(e, "Could not seek earliest offset");
@@ -149,7 +147,7 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
   {
     for (StreamPartition<String> partition : partitions) {
       try {
-        consumerHashMap.get(partition.getPartitionId()).seek(MessageId.latest);
+        consumerHashMap.get(partition).seek(MessageId.latest);
       }
       catch (PulsarClientException e) {
         log.error(e, "Could not seek to latest offset.");
@@ -161,11 +159,7 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
   @Override
   public Set<StreamPartition<String>> getAssignment()
   {
-    Set<StreamPartition<String>> streamPartitions = new HashSet<>();
-    for (String topicPartition : consumerHashMap.keySet()) {
-      String topic = topicPartition.split("-partition-")[0];
-      streamPartitions.add(new StreamPartition<>(topic, topicPartition));
-    }
+    Set<StreamPartition<String>> streamPartitions = new HashSet<>(consumerHashMap.keySet());
     return streamPartitions;
   }
 
@@ -174,7 +168,7 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
   public List<OrderedPartitionableRecord<String, String, PulsarRecordEntity>> poll(long timeout)
   {
     List<OrderedPartitionableRecord<String, String, PulsarRecordEntity>> polledRecords = new ArrayList<>();
-    for (String topicPartition : consumerHashMap.keySet()) {
+    for (StreamPartition<String> topicPartition : consumerHashMap.keySet()) {
       Consumer consumer = consumerHashMap.get(topicPartition);
       Iterator messageIterator = null;
       try {
@@ -201,7 +195,7 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
   {
     String pos = null;
     try {
-      pos = consumerHashMap.get(partition.getPartitionId()).getLastMessageId().toString();
+      pos = consumerHashMap.get(partition).getLastMessageId().toString();
     }
     catch (PulsarClientException e) {
       log.error(e, "Could not get latest message ID. ");
@@ -220,7 +214,14 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
   @Override
   public String getPosition(StreamPartition<String> partition)
   {
-    throw new UnsupportedOperationException("getPosition() is not supported in Pulsar");
+    try {
+      Consumer consumer = consumerHashMap.get(partition);
+      return consumer.getLastMessageId().toString();
+    }
+    catch (PulsarClientException e) {
+      throw new StreamException(e);
+    }
+    //throw new UnsupportedOperationException("getPosition() is not supported in Pulsar");
   }
 
   @Override
@@ -248,7 +249,7 @@ public class PulsarRecordSupplier implements RecordSupplier<String, String, Puls
       return;
     }
     closed = true;
-    for (String topicPartition : consumerHashMap.keySet()) {
+    for (StreamPartition<String> topicPartition : consumerHashMap.keySet()) {
       try {
         consumerHashMap.get(topicPartition).close();
       }
