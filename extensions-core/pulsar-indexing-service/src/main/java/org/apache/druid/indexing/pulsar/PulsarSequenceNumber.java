@@ -36,9 +36,17 @@ public class PulsarSequenceNumber extends OrderedSequenceNumber<String>
 {
   private static final EmittingLogger log = new EmittingLogger(PulsarSequenceNumber.class);
 
+  private MessageId messageId;
+
   private PulsarSequenceNumber(String sequenceNumber)
   {
     super(sequenceNumber, false);
+    this.messageId = getMessageId(sequenceNumber);
+  }
+
+  public MessageId getMessageId()
+  {
+    return this.messageId;
   }
 
   public static PulsarSequenceNumber of(String sequenceNumber)
@@ -71,9 +79,12 @@ public class PulsarSequenceNumber extends OrderedSequenceNumber<String>
       @NotNull OrderedSequenceNumber<String> o
   )
   {
-    MessageId ss1 = getMessageId(get());
-    MessageId ss2 = getMessageId(o.get());
-    return ss1.compareTo(ss2);
+    if (o instanceof PulsarSequenceNumber) {
+      PulsarSequenceNumber other = (PulsarSequenceNumber) o;
+      return this.getMessageId().compareTo(other.getMessageId());
+    } else {
+      throw new IllegalArgumentException("expected PulsarSequenceNumber object. Got instance of " + o.getClass().getName());
+    }
   }
 
 }
