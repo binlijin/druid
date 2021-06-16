@@ -246,6 +246,8 @@
                                         <argument>-c</argument>
                                         <argument>org.apache.druid.extensions:druid-ranger-security</argument>
                                         <argument>-c</argument>
+                                        <argument>org.apache.druid.extensions:druid-pulsar-indexing-service</argument>
+                                        <argument>-c</argument>
                                         <argument>org.apache.druid.extensions:druid-kubernetes-extensions</argument>
                                         <argument>${druid.distribution.pulldeps.opts}</argument>
                                     </arguments>
