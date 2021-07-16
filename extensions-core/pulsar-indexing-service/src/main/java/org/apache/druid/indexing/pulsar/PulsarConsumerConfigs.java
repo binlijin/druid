@@ -37,10 +37,8 @@ public class PulsarConsumerConfigs
     final Map<String, Object> props = new HashMap<>();
     if (consumerProperties != null) {
       props.putAll(consumerProperties);
-      if (!consumerProperties.containsKey("subscriptionName")) {
-        props.put("subscriptionName", StringUtils.format("pulsar-supervisor-%s", IdUtils.getRandomId()));
-      }
     }
+    props.putIfAbsent("subscriptionName", StringUtils.format("pulsar-supervisor-%s", IdUtils.getRandomId()));
     return props;
   }
 
