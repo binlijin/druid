@@ -21,9 +21,9 @@ package org.apache.druid.indexing.pulsar;
 
 import org.apache.druid.indexing.seekablestream.common.StreamPartition;
 import org.apache.druid.java.util.emitter.EmittingLogger;
-import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.PulsarClientException;
+import org.apache.pulsar.client.api.Reader;
 
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
@@ -35,12 +35,12 @@ public class PuslarRecordFetcher
 {
   private static final EmittingLogger log = new EmittingLogger(PuslarRecordFetcher.class);
 
-  private ConcurrentHashMap<StreamPartition<String>, Consumer> readers;
+  private ConcurrentHashMap<StreamPartition<String>, Reader> readers;
   private BlockingQueue<Message<byte[]>> received;
 
   private volatile boolean stopRequested;
 
-  public PuslarRecordFetcher(ConcurrentHashMap<StreamPartition<String>, Consumer> readers, BlockingQueue<Message<byte[]>> received)
+  public PuslarRecordFetcher(ConcurrentHashMap<StreamPartition<String>, Reader> readers, BlockingQueue<Message<byte[]>> received)
   {
     this.readers = readers;
     this.received = received;
@@ -57,9 +57,9 @@ public class PuslarRecordFetcher
       }
       try {
         boolean fetch = false;
-        for (Map.Entry<StreamPartition<String>, Consumer> entry : readers.entrySet()) {
-          Consumer<byte[]> consumer = entry.getValue();
-          Message<byte[]> message = consumer.receive(0, TimeUnit.NANOSECONDS);
+        for (Map.Entry<StreamPartition<String>, Reader> entry : readers.entrySet()) {
+          Reader<byte[]> reader = entry.getValue();
+          Message<byte[]> message = reader.readNext(0, TimeUnit.NANOSECONDS);
           if (message != null) {
             received.put(message);
             //log.info(entry.getKey() + " get MessageId " + message.getMessageId() + ", message = " + message);

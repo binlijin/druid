@@ -28,6 +28,7 @@ import org.apache.druid.indexing.overlord.sampler.SamplerConfig;
 import org.apache.druid.indexing.pulsar.supervisor.PulsarSupervisorIOConfig;
 import org.apache.druid.indexing.pulsar.supervisor.PulsarSupervisorSpec;
 import org.apache.druid.indexing.seekablestream.SeekableStreamSamplerSpec;
+import org.apache.druid.segment.indexing.TuningConfig;
 
 import javax.annotation.Nullable;
 
@@ -60,7 +61,7 @@ public class PulsarSamplerSpec extends SeekableStreamSamplerSpec
 
       final Map<String, Object> props = new HashMap<>(((PulsarSupervisorIOConfig) ioConfig).getConsumerProperties());
 
-      return new PulsarRecordSupplier(props, objectMapper);
+      return new PulsarRecordSupplier("druid-pulsar-indexing-sampler", props, objectMapper, TuningConfig.DEFAULT_MAX_ROWS_IN_MEMORY);
     }
     finally {
       Thread.currentThread().setContextClassLoader(currCtxCl);

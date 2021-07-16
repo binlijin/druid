@@ -37,8 +37,8 @@ import org.apache.druid.indexing.pulsar.PulsarIndexTask;
 import org.apache.druid.indexing.pulsar.PulsarIndexTaskClientFactory;
 import org.apache.druid.indexing.pulsar.PulsarIndexTaskIOConfig;
 import org.apache.druid.indexing.pulsar.PulsarIndexTaskTuningConfig;
-import org.apache.druid.indexing.pulsar.PulsarRecordSupplier;
 import org.apache.druid.indexing.pulsar.PulsarSequenceNumber;
+import org.apache.druid.indexing.pulsar.PulsarSupervisorRecordSupplier;
 import org.apache.druid.indexing.seekablestream.SeekableStreamEndSequenceNumbers;
 import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTask;
 import org.apache.druid.indexing.seekablestream.SeekableStreamIndexTaskIOConfig;
@@ -118,7 +118,7 @@ public class PulsarSupervisor extends SeekableStreamSupervisor<String, String, P
   @Override
   protected RecordSupplier<String, String, PulsarRecordEntity> setupRecordSupplier()
   {
-    return new PulsarRecordSupplier(spec.getIoConfig().getConsumerProperties(), sortingMapper);
+    return new PulsarSupervisorRecordSupplier(spec.getIoConfig().getConsumerProperties(), sortingMapper);
   }
 
   @Override

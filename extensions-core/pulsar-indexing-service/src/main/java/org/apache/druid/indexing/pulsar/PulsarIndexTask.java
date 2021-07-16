@@ -104,7 +104,7 @@ public class PulsarIndexTask extends SeekableStreamIndexTask<String, String, Pul
         maxRowsInMemory = tuningConfig.getMaxRowsInMemory();
       }
 
-      return new PulsarRecordSupplier(props, configMapper, maxRowsInMemory);
+      return new PulsarRecordSupplier(getId(), props, configMapper, maxRowsInMemory);
     }
     finally {
       Thread.currentThread().setContextClassLoader(currCtxCl);
